@@ -16,13 +16,21 @@ class ThingsTask:
 
     @property
     def effective_date(self) -> Optional[date]:
+        candidate: Optional[date] = None
         if self.when_date is not None:
-            return self.when_date
-        if self.in_today:
-            return date.today()
-        if self.deadline_date is not None:
-            return self.deadline_date
-        return None
+            candidate = self.when_date
+        elif self.in_today:
+            candidate = date.today()
+        elif self.deadline_date is not None:
+            candidate = self.deadline_date
+
+        if candidate is None:
+            return None
+
+        # Overdue tasks roll forward: Things keeps showing them in Today, so a
+        # calendar event stranded on a past date is never what the user wants.
+        today = date.today()
+        return today if candidate < today else candidate
 
 
 @dataclass
