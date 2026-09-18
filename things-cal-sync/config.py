@@ -26,6 +26,11 @@ BUSY_CALENDARS = [
 # push every task into the evening.
 IGNORE_ALLDAY_EVENTS = True
 
+# Finding recurring series means scanning every event in the busy calendars,
+# which is far too slow to repeat hourly. They change rarely, so the result is
+# cached in the database and refreshed this often.
+RECURRING_CACHE_HOURS = 24
+
 # AppleScript marker stored inside event description
 THINGS_ID_MARKER = "x-things-id:"
 

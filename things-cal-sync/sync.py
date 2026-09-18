@@ -377,6 +377,47 @@ def phase_deletions(conn, active_tasks, summary):
 # ---------------------------------------------------------------------------
 
 
+def _recurring_series(conn) -> list[tuple[str, str, str]]:
+    """Cached recurring series, refreshed at most once per RECURRING_CACHE_HOURS."""
+    age = db.recurring_series_age_hours(conn)
+    if age is not None and age < config.RECURRING_CACHE_HOURS:
+        series = db.get_recurring_series(conn)
+        log.info("Recurring series: %d from cache (%.1fh old)", len(series), age)
+        return series
+
+    try:
+        series = calendar_bridge.fetch_recurring_series()
+    except calendar_bridge.AppleScriptError as exc:
+        # Keep using whatever we had rather than losing gap-avoidance entirely.
+        stale = db.get_recurring_series(conn)
+        log.warning(
+            "Could not refresh recurring series (%s); using %d cached",
+            exc, len(stale),
+        )
+        return stale
+
+    db.replace_recurring_series(conn, series)
+    conn.commit()
+    log.info("Recurring series: refreshed cache, %d series", len(series))
+    return series
+
+
+def _busy_slots(conn, start_date: date, end_date: date):
+    by_date = calendar_bridge.list_oneoff_busy(start_date, end_date)
+    oneoff = sum(len(v) for v in by_date.values())
+    series = _recurring_series(conn)
+    from_series = calendar_bridge.expand_series_into(
+        by_date, series, start_date, end_date
+    )
+    log.info(
+        "Busy slots %s..%s: %d one-off + %d from %d recurring series "
+        "= %d blocks across %d dates",
+        start_date, end_date, oneoff, from_series, len(series),
+        oneoff + from_series, len(by_date),
+    )
+    return by_date
+
+
 def phase_restack(conn, summary):
     if not summary.affected_dates:
         return
@@ -391,10 +432,8 @@ def phase_restack(conn, summary):
     if not valid_dates:
         return
 
-    # One bulk external-busy-slots fetch across all affected dates
-    range_start = min(valid_dates)
-    range_end = max(valid_dates)
-    busy_by_date = calendar_bridge.list_external_busy_slots_range(range_start, range_end)
+    # One busy-slot fetch across all affected dates
+    busy_by_date = _busy_slots(conn, min(valid_dates), max(valid_dates))
 
     for target_date in sorted(valid_dates):
         records = db.records_for_date(conn, target_date.isoformat())

@@ -35,6 +35,15 @@ SCHEMA = [
         notes       TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS recurring_series (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        master_start TEXT NOT NULL,
+        master_end   TEXT NOT NULL,
+        rule         TEXT NOT NULL,
+        fetched_at   TEXT NOT NULL
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_task_map_synced_date ON task_map(synced_date)",
     "CREATE INDEX IF NOT EXISTS idx_task_map_cal_uid ON task_map(cal_uid)",
 ]
@@ -169,6 +178,37 @@ def update_title(conn, things_id, title):
 
 def delete_record(conn, things_id):
     conn.execute("DELETE FROM task_map WHERE things_id = ?", (things_id,))
+
+
+def recurring_series_age_hours(conn) -> Optional[float]:
+    """Hours since the recurring-series cache was filled, or None if empty."""
+    cur = conn.execute("SELECT MAX(fetched_at) AS ts FROM recurring_series")
+    row = cur.fetchone()
+    if row is None or row["ts"] is None:
+        return None
+    try:
+        fetched = datetime.fromisoformat(row["ts"])
+    except ValueError:
+        return None
+    return (datetime.now() - fetched).total_seconds() / 3600.0
+
+
+def get_recurring_series(conn) -> list[tuple[str, str, str]]:
+    cur = conn.execute(
+        "SELECT master_start, master_end, rule FROM recurring_series ORDER BY id"
+    )
+    return [(r["master_start"], r["master_end"], r["rule"]) for r in cur.fetchall()]
+
+
+def replace_recurring_series(conn, rows: list[tuple[str, str, str]]) -> None:
+    """Swap the whole cache for a freshly fetched set."""
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.execute("DELETE FROM recurring_series")
+    conn.executemany(
+        "INSERT INTO recurring_series (master_start, master_end, rule, fetched_at)"
+        " VALUES (?, ?, ?, ?)",
+        [(s, e, rule, now) for s, e, rule in rows],
+    )
 
 
 def start_sync_run(conn) -> int:
