@@ -9,6 +9,23 @@ SLOT_MINUTES = 30
 LOOKBACK_DAYS = 7
 LOOKAHEAD_DAYS = 730
 
+# Calendars whose events mean "Arthur is busy, do not put a task here".
+# Matched by name, so all three accounts exposing a calendar called "Agenda"
+# count. Everything left out (birthdays, Dutch holidays, F1, other people's
+# calendars) is ignored when placing tasks.
+BUSY_CALENDARS = [
+    "Agenda",
+    "Reistijd",
+    "Planning",
+    "Thuis",
+    "Thuis-agenda",
+    "Sport",
+]
+
+# All-day events (holidays, birthdays) would otherwise block a whole day and
+# push every task into the evening.
+IGNORE_ALLDAY_EVENTS = True
+
 # AppleScript marker stored inside event description
 THINGS_ID_MARKER = "x-things-id:"
 

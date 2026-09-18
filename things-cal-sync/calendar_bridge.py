@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 import config
+import recurrence
 from models import CalEvent
 
 log = logging.getLogger(__name__)
@@ -369,6 +370,8 @@ on isoDateTime(d)
     return yStr & "-" & mStr & "-" & dStr & "T" & hStr & ":" & nStr & ":" & sStr
 end isoDateTime
 
+set busyNames to {busy}
+
 set startWindow to current date
 set year of startWindow to {sy}
 set month of startWindow to {sm}
@@ -384,19 +387,55 @@ set time of endWindow to 23 * 3600 + 59 * 60 + 59
 set output to ""
 tell application "Calendar"
     repeat with c in calendars
+        set cname to ""
         try
             set cname to name of c
-        on error
-            set cname to ""
         end try
-        if cname is not "{cal}" then
+        if cname is in busyNames then
+            -- One-off events inside the window. Recurring masters are skipped
+            -- here; they are handled below, because Calendar reports them at
+            -- their first occurrence rather than at the occurrence in range.
             try
                 set theEvents to (every event of c whose start date is greater than or equal to startWindow and start date is less than or equal to endWindow)
                 repeat with e in theEvents
                     try
-                        set sStr to my isoDateTime(start date of e)
-                        set eStr to my isoDateTime(end date of e)
-                        set output to output & sStr & tab & eStr & linefeed
+                        set skipIt to false
+                        try
+                            if (allday event of e) is true then set skipIt to true
+                        end try
+                        try
+                            if recurrence of e is not missing value then set skipIt to true
+                        end try
+                        if skipIt is false then
+                            set output to output & "ONE" & tab & my isoDateTime(start date of e) & tab & my isoDateTime(end date of e) & linefeed
+                        end if
+                    end try
+                end repeat
+            end try
+
+            -- Recurring series. Properties are fetched in bulk: asking per
+            -- event is unusably slow across thousands of events, and a
+            -- `whose recurrence is not missing value` filter errors out.
+            try
+                set recList to recurrence of every event of c
+                set startList to start date of every event of c
+                set endList to end date of every event of c
+                set adList to {{}}
+                try
+                    set adList to allday event of every event of c
+                end try
+                repeat with i from 1 to (count of recList)
+                    try
+                        set r to item i of recList
+                        if r is not missing value then
+                            set isAD to false
+                            try
+                                if (item i of adList) is true then set isAD to true
+                            end try
+                            if isAD is false then
+                                set output to output & "REC" & tab & my isoDateTime(item i of startList) & tab & my isoDateTime(item i of endList) & tab & (r as string) & linefeed
+                            end if
+                        end if
                     end try
                 end repeat
             end try
@@ -407,27 +446,32 @@ return output
 '''
 
 
+def _applescript_name_list(names: list[str]) -> str:
+    return "{" + ", ".join(f'"{_escape(n)}"' for n in names) + "}"
+
+
 def list_external_busy_slots_range(
     start_date: date,
     end_date: date,
     calendar_name: str = config.CALENDAR_NAME,
 ) -> dict[date, list[tuple[datetime, datetime]]]:
-    """Return {date: [(start_dt, end_dt), ...]} for all events in any calendar
-    other than the Things Tasks one, between start_date and end_date (inclusive).
+    """Return {date: [(start_dt, end_dt), ...]} of times Arthur is busy.
 
-    One AppleScript call for the whole range — much faster than one-per-date.
-    Returns an empty dict on timeout/failure so the sync continues (tasks will
-    stack from START_HOUR without gap-avoidance, but nothing crashes).
+    Only calendars listed in config.BUSY_CALENDARS are consulted, all-day
+    events are ignored, and recurring series are expanded locally because
+    Calendar.app reports them only at their first occurrence.
+
+    One AppleScript call for the whole range. Returns an empty dict on
+    timeout/failure so the sync continues -- tasks then stack from START_HOUR
+    without gap-avoidance rather than the run crashing.
     """
     script = _LIST_BUSY_RANGE_TEMPLATE.format(
         sy=start_date.year, sm=start_date.month, sd=start_date.day,
         ey=end_date.year, em=end_date.month, ed=end_date.day,
-        cal=_escape(calendar_name),
+        busy=_applescript_name_list(config.BUSY_CALENDARS),
     )
     try:
-        # 90s covers a heavy Exchange + iCloud + personal-calendar setup
-        # scanning several months of events.
-        raw = _run_osascript(script, timeout=90)
+        raw = _run_osascript(script, timeout=180)
     except AppleScriptError as exc:
         log.warning(
             "Could not read external busy slots (%s..%s): %s",
@@ -436,21 +480,43 @@ def list_external_busy_slots_range(
         return {}
 
     by_date: dict[date, list[tuple[datetime, datetime]]] = {}
+    singles = 0
+    series = 0
+    from_series = 0
+
     for line in raw.splitlines():
         if not line.strip():
             continue
         parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        try:
-            sdt = datetime.strptime(parts[0], "%Y-%m-%dT%H:%M:%S")
-            edt = datetime.strptime(parts[1], "%Y-%m-%dT%H:%M:%S")
-        except ValueError:
-            continue
-        by_date.setdefault(sdt.date(), []).append((sdt, edt))
+        kind = parts[0]
+
+        if kind == "ONE" and len(parts) >= 3:
+            try:
+                sdt = datetime.strptime(parts[1], "%Y-%m-%dT%H:%M:%S")
+                edt = datetime.strptime(parts[2], "%Y-%m-%dT%H:%M:%S")
+            except ValueError:
+                continue
+            by_date.setdefault(sdt.date(), []).append((sdt, edt))
+            singles += 1
+
+        elif kind == "REC" and len(parts) >= 4:
+            try:
+                master_start = datetime.strptime(parts[1], "%Y-%m-%dT%H:%M:%S")
+                master_end = datetime.strptime(parts[2], "%Y-%m-%dT%H:%M:%S")
+            except ValueError:
+                continue
+            series += 1
+            for sdt, edt in recurrence.expand(
+                master_start, master_end, parts[3], start_date, end_date
+            ):
+                by_date.setdefault(sdt.date(), []).append((sdt, edt))
+                from_series += 1
+
     log.info(
-        "External busy slots: %d events across %s..%s (%d dates)",
-        sum(len(v) for v in by_date.values()), start_date, end_date, len(by_date),
+        "Busy slots %s..%s: %d one-off + %d from %d recurring series "
+        "= %d blocks across %d dates",
+        start_date, end_date, singles, from_series, series,
+        singles + from_series, len(by_date),
     )
     return by_date
 
