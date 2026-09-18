@@ -201,13 +201,20 @@ def get_recurring_series(conn) -> list[tuple[str, str, str]]:
 
 
 def replace_recurring_series(conn, rows: list[tuple[str, str, str]]) -> None:
-    """Swap the whole cache for a freshly fetched set."""
+    """Swap the whole cache for a freshly fetched set.
+
+    Identical rows are collapsed: every detached occurrence of a series (an
+    instance someone dragged to another time) is stored by macOS as its own
+    event carrying the full rule, so the same series comes back many times
+    over and would otherwise be expanded once per copy.
+    """
     now = datetime.now().isoformat(timespec="seconds")
+    unique = list(dict.fromkeys(rows))
     conn.execute("DELETE FROM recurring_series")
     conn.executemany(
         "INSERT INTO recurring_series (master_start, master_end, rule, fetched_at)"
         " VALUES (?, ?, ?, ?)",
-        [(s, e, rule, now) for s, e, rule in rows],
+        [(s, e, rule, now) for s, e, rule in unique],
     )
 
 

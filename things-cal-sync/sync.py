@@ -409,6 +409,11 @@ def _busy_slots(conn, start_date: date, end_date: date):
     from_series = calendar_bridge.expand_series_into(
         by_date, series, start_date, end_date
     )
+    # Several series can produce the very same block (the same meeting synced
+    # through two accounts, or detached occurrences of one series). Identical
+    # blocks change nothing for stacking but make the logs unreadable.
+    for day, slots in by_date.items():
+        by_date[day] = sorted(set(slots))
     log.info(
         "Busy slots %s..%s: %d one-off + %d from %d recurring series "
         "= %d blocks across %d dates",
