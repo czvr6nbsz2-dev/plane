@@ -1,10 +1,11 @@
 """Time-slot assignment.
 
-Lay out the day's tasks into 30-minute slots starting at START_HOUR, skipping
-slots that overlap pinned tasks or external (non-Things) calendar events.
+Lay out the day's tasks into 30-minute slots between START_HOUR and END_HOUR,
+skipping slots that overlap pinned tasks or external (non-Things) calendar
+events. Tasks that no longer fit in the working window are queued after
+END_HOUR, and never cross midnight into the next day.
 """
 from datetime import date, datetime, timedelta
-from typing import Iterable
 
 import config
 from models import ThingsTask
@@ -25,15 +26,22 @@ def assign_slots(
     pinned_map: dict[str, tuple[datetime, datetime]],
     start_hour: int = config.START_HOUR,
     slot_minutes: int = config.SLOT_MINUTES,
+    end_hour: int = config.END_HOUR,
 ) -> dict[str, tuple[datetime, datetime]]:
     blocked = list(existing_slots)
-    for tid, slot in pinned_map.items():
+    for _tid, slot in pinned_map.items():
         if not any(_overlaps(slot, b) for b in blocked):
             blocked.append(slot)
 
-    cursor = datetime(target_date.year, target_date.month, target_date.day, start_hour, 0)
     step = timedelta(minutes=slot_minutes)
-    day_end = datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59)
+    day = datetime(target_date.year, target_date.month, target_date.day)
+    work_start = day.replace(hour=start_hour)
+    work_end = day.replace(hour=end_hour)
+    # Latest start that still keeps the whole slot inside the target day.
+    last_possible_start = day + timedelta(days=1) - step
+
+    cursor = work_start
+    overflow_cursor = work_end
 
     assignments: dict[str, tuple[datetime, datetime]] = {}
 
@@ -42,17 +50,25 @@ def assign_slots(
             assignments[task.things_id] = pinned_map[task.things_id]
             continue
 
-        while True:
-            slot = (cursor, cursor + step)
-            if slot[1] > day_end:
+        slot = None
+        probe = cursor
+        while probe + step <= work_end:
+            candidate = (probe, probe + step)
+            if not _conflicts(candidate, blocked):
+                slot = candidate
+                cursor = probe + step
                 break
-            if not _conflicts(slot, blocked):
-                break
-            cursor += step
+            probe += step
 
-        slot = (cursor, cursor + step)
+        if slot is None:
+            # Working window is full. Queue after END_HOUR rather than hunting
+            # for gaps at night, and never spill past midnight — an event on
+            # the following calendar day would contradict its synced_date.
+            start = min(overflow_cursor, last_possible_start)
+            slot = (start, start + step)
+            overflow_cursor = min(start + step, last_possible_start)
+
         assignments[task.things_id] = slot
         blocked.append(slot)
-        cursor += step
 
     return assignments

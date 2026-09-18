@@ -4,6 +4,7 @@ from pathlib import Path
 # Calendar configuration
 CALENDAR_NAME = "Things Tasks"
 START_HOUR = 8
+END_HOUR = 18
 SLOT_MINUTES = 30
 LOOKBACK_DAYS = 7
 LOOKAHEAD_DAYS = 730
