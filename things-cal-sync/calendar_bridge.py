@@ -413,31 +413,47 @@ tell application "Calendar"
                 end repeat
             end try
 
-            -- Recurring series. Properties are fetched in bulk: asking per
-            -- event is unusably slow across thousands of events, and a
-            -- `whose recurrence is not missing value` filter errors out.
+            -- Recurring series. A `whose recurrence is not missing value`
+            -- filter errors out, and reading properties per event means one
+            -- Apple Event round trip each -- unusable across thousands of
+            -- events. So: fetch the recurrence column in bulk, walk it once
+            -- with an iterator (indexing a long AppleScript list is O(n),
+            -- which turns the whole loop quadratic), and only then look up
+            -- the dates for the handful of positions that are recurring.
             try
                 set recList to recurrence of every event of c
-                set startList to start date of every event of c
-                set endList to end date of every event of c
-                set adList to {{}}
-                try
-                    set adList to allday event of every event of c
-                end try
-                repeat with i from 1 to (count of recList)
+                set idxList to {{}}
+                set ruleList to {{}}
+                set i to 0
+                repeat with r in recList
+                    set i to i + 1
+                    set rv to contents of r
+                    if rv is not missing value then
+                        set end of idxList to i
+                        set end of ruleList to (rv as string)
+                    end if
+                end repeat
+
+                if (count of idxList) > 0 then
+                    set startList to start date of every event of c
+                    set endList to end date of every event of c
+                    set adList to {{}}
                     try
-                        set r to item i of recList
-                        if r is not missing value then
+                        set adList to allday event of every event of c
+                    end try
+                    repeat with k from 1 to (count of idxList)
+                        try
+                            set i to item k of idxList
                             set isAD to false
                             try
                                 if (item i of adList) is true then set isAD to true
                             end try
                             if isAD is false then
-                                set output to output & "REC" & tab & my isoDateTime(item i of startList) & tab & my isoDateTime(item i of endList) & tab & (r as string) & linefeed
+                                set output to output & "REC" & tab & my isoDateTime(item i of startList) & tab & my isoDateTime(item i of endList) & tab & (item k of ruleList) & linefeed
                             end if
-                        end if
-                    end try
-                end repeat
+                        end try
+                    end repeat
+                end if
             end try
         end if
     end repeat
@@ -470,6 +486,8 @@ def list_external_busy_slots_range(
         ey=end_date.year, em=end_date.month, ed=end_date.day,
         busy=_applescript_name_list(config.BUSY_CALENDARS),
     )
+    import time as _time
+    started = _time.monotonic()
     try:
         raw = _run_osascript(script, timeout=180)
     except AppleScriptError as exc:
@@ -478,6 +496,7 @@ def list_external_busy_slots_range(
             start_date, end_date, exc,
         )
         return {}
+    fetch_seconds = _time.monotonic() - started
 
     by_date: dict[date, list[tuple[datetime, datetime]]] = {}
     singles = 0
@@ -513,9 +532,9 @@ def list_external_busy_slots_range(
                 from_series += 1
 
     log.info(
-        "Busy slots %s..%s: %d one-off + %d from %d recurring series "
+        "Busy slots %s..%s in %.0fs: %d one-off + %d from %d recurring series "
         "= %d blocks across %d dates",
-        start_date, end_date, singles, from_series, series,
+        start_date, end_date, fetch_seconds, singles, from_series, series,
         singles + from_series, len(by_date),
     )
     return by_date
