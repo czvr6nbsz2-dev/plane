@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.user.things-cal-sync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>REPLACE_WITH_PYTHON</string>
+    <string>REPLACE_WITH_FULL_PATH/sync.py</string>
+  </array>
+
+  <!-- Every hour on the hour. StartCalendarInterval beats StartInterval here:
+       launchd runs a missed calendar slot shortly after the Mac wakes, so
+       closing the lid at 17:00 and opening it at 09:00 gets a sync right
+       away instead of waiting out the rest of the interval. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- The sync takes about a minute; don't let two overlap. -->
+  <key>AbandonProcessGroup</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>REPLACE_WITH_HOME/.local/share/things-sync/logs/sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>REPLACE_WITH_HOME/.local/share/things-sync/logs/sync.error.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
