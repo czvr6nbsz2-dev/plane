@@ -209,6 +209,34 @@ def phase_things_to_calendar(conn, active_tasks, cal_by_things_id, summary):
                     log.warning("Could not update title for %s: %s", task.things_id, exc)
                     summary.errors += 1
 
+            # Calendar.app (via Exchange) can reassign an event's UID without
+            # changing its date or title.  When that happens the DB's cal_uid
+            # and synced_start/end times are stale; update them so the restack
+            # comparison in Phase 6 uses the actual current calendar position.
+            if cal_event is not None and existing.cal_uid != cal_event.cal_uid:
+                log.info(
+                    "Calendar UID changed for %s: %s -> %s; updating DB",
+                    task.things_id, existing.cal_uid, cal_event.cal_uid,
+                )
+                db.upsert_record(
+                    conn,
+                    SyncRecord(
+                        things_id=existing.things_id,
+                        cal_uid=cal_event.cal_uid,
+                        things_title=existing.things_title,
+                        synced_date=existing.synced_date,
+                        synced_start_time=_iso(cal_event.start_dt),
+                        synced_end_time=_iso(cal_event.end_dt),
+                        user_pinned=existing.user_pinned,
+                        pinned_start_time=existing.pinned_start_time,
+                        pinned_end_time=existing.pinned_end_time,
+                        last_synced_at=_now_iso(),
+                        things_mod_at=existing.things_mod_at,
+                        creation_date=existing.creation_date,
+                    ),
+                )
+                summary.affected_dates.add(existing.synced_date)
+
             if cal_event is None and target_date is not None:
                 log.info("Calendar event for %s missing; recreating", task.things_id)
                 _create_for_task(conn, task, target_date, summary, replace=True)
@@ -539,6 +567,12 @@ def run_sync() -> int:
 
             phase_deletions(conn, active_by_id, summary)
             conn.commit()
+
+            # Always restack today so stacking drift (e.g. from an Exchange
+            # UID reassignment or a missed roll-forward) is corrected every run.
+            today_iso = _date_iso(date.today())
+            if db.records_for_date(conn, today_iso):
+                summary.affected_dates.add(today_iso)
 
             phase_restack(conn, summary)
             conn.commit()
