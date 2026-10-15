@@ -13,6 +13,7 @@ class ThingsTask:
     modification_date: Optional[datetime]
     creation_date: Optional[datetime]
     in_today: bool
+    tags: list = field(default_factory=list)
 
     @property
     def effective_date(self) -> Optional[date]:

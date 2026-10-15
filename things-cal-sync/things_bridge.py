@@ -101,6 +101,16 @@ tell application "Things3"
                         end if
                     end try
                     set output to output & tid & tab & tname & tab & wdate & tab & ddate & tab & mdate & tab & cdate & tab & "1" & linefeed
+                    set ttagsStr to ""
+                    try
+                        set ttags to tag names of t
+                        if (count of ttags) > 0 then
+                            set AppleScript's text item delimiters to ","
+                            set ttagsStr to ttags as string
+                            set AppleScript's text item delimiters to ""
+                        end if
+                    end try
+                    set output to output & tid & tab & tname & tab & wdate & tab & ddate & tab & mdate & tab & cdate & tab & "1" & tab & ttagsStr & linefeed
                 end if
             end if
         end try
@@ -151,6 +161,16 @@ tell application "Things3"
                             end if
                         end try
                         set output to output & tid & tab & tname & tab & wdate & tab & ddate & tab & mdate & tab & cdate & tab & "0" & linefeed
+                        set ttagsStr to ""
+                        try
+                            set ttags to tag names of t
+                            if (count of ttags) > 0 then
+                                set AppleScript's text item delimiters to ","
+                                set ttagsStr to ttags as string
+                                set AppleScript's text item delimiters to ""
+                            end if
+                        end try
+                        set output to output & tid & tab & tname & tab & wdate & tab & ddate & tab & mdate & tab & cdate & tab & "0" & tab & ttagsStr & linefeed
                     end if
                 end if
             end if
@@ -226,6 +246,14 @@ def list_active_tasks() -> list[ThingsTask]:
             log.warning("Skipping malformed Things row: %r", line)
             continue
         tid, name, wdate, ddate, mdate, cdate, in_today = parts[:7]
+        tags_str = parts[7] if len(parts) >= 8 else ""
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
+
+        if config.EXCLUDED_TAGS and config.EXCLUDED_TAGS.intersection(tags):
+            log.info("Skipping task %s (%r): excluded tag(s) %s", tid, name,
+                     config.EXCLUDED_TAGS.intersection(tags))
+            continue
+
         tasks.append(
             ThingsTask(
                 things_id=tid,
@@ -235,6 +263,7 @@ def list_active_tasks() -> list[ThingsTask]:
                 modification_date=_parse_iso_datetime(mdate),
                 creation_date=_parse_iso_datetime(cdate),
                 in_today=(in_today == "1"),
+                tags=tags,
             )
         )
     return tasks

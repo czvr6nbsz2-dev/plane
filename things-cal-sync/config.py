@@ -31,6 +31,11 @@ IGNORE_ALLDAY_EVENTS = True
 # cached in the database and refreshed this often.
 RECURRING_CACHE_HOURS = 24
 
+# Things tags that exclude a task from calendar sync entirely.
+# Tasks carrying any of these tags are skipped (and any existing calendar
+# event is removed the next time the sync runs so the calendar stays clean).
+EXCLUDED_TAGS: frozenset = frozenset({"@w"})
+
 # AppleScript marker stored inside event description
 THINGS_ID_MARKER = "x-things-id:"
 
