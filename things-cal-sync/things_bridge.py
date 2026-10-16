@@ -100,7 +100,6 @@ tell application "Things3"
                             set cdate to my isoDateTime(creation date of t)
                         end if
                     end try
-                    set output to output & tid & tab & tname & tab & wdate & tab & ddate & tab & mdate & tab & cdate & tab & "1" & linefeed
                     set ttagsStr to ""
                     try
                         set ttags to tag names of t
@@ -160,7 +159,6 @@ tell application "Things3"
                                 set cdate to my isoDateTime(creation date of t)
                             end if
                         end try
-                        set output to output & tid & tab & tname & tab & wdate & tab & ddate & tab & mdate & tab & cdate & tab & "0" & linefeed
                         set ttagsStr to ""
                         try
                             set ttags to tag names of t
@@ -235,6 +233,9 @@ def _parse_iso_datetime(s):
         return None
 
 
+_EXCLUDED_TAGS_LOWER = {t.lower() for t in config.EXCLUDED_TAGS}
+
+
 def list_active_tasks() -> list[ThingsTask]:
     raw = _run_osascript(_LIST_TASKS_SCRIPT)
     tasks: list[ThingsTask] = []
@@ -249,9 +250,9 @@ def list_active_tasks() -> list[ThingsTask]:
         tags_str = parts[7] if len(parts) >= 8 else ""
         tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
 
-        if config.EXCLUDED_TAGS and config.EXCLUDED_TAGS.intersection(tags):
-            log.info("Skipping task %s (%r): excluded tag(s) %s", tid, name,
-                     config.EXCLUDED_TAGS.intersection(tags))
+        excluded = {t for t in tags if t.lower() in _EXCLUDED_TAGS_LOWER}
+        if excluded:
+            log.info("Skipping task %s (%r): excluded tag(s) %s", tid, name, sorted(excluded))
             continue
 
         tasks.append(
