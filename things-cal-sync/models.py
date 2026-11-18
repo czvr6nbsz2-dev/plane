@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Optional
 
+import config
+
 
 @dataclass
 class ThingsTask:
@@ -14,6 +16,11 @@ class ThingsTask:
     creation_date: Optional[datetime]
     in_today: bool
     tags: list = field(default_factory=list)
+    # Event length, from a size tag (see config.SIZE_TAGS).
+    duration_minutes: int = config.SLOT_MINUTES
+    # Position in Things' Today list (0 = top); None when not in Today.
+    # Used as priority: a lower rank is stacked earlier in the day.
+    today_rank: Optional[int] = None
 
     @property
     def effective_date(self) -> Optional[date]:
@@ -58,6 +65,8 @@ class SyncRecord:
     last_synced_at: str
     things_mod_at: Optional[str]
     creation_date: Optional[str]
+    duration_minutes: int = config.SLOT_MINUTES
+    priority_rank: Optional[int] = None
 
 
 @dataclass

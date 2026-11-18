@@ -23,7 +23,9 @@ SCHEMA = [
         pinned_end_time   TEXT,
         last_synced_at    TEXT NOT NULL,
         things_mod_at     TEXT,
-        creation_date     TEXT
+        creation_date     TEXT,
+        duration_minutes  INTEGER NOT NULL DEFAULT 30,
+        priority_rank     INTEGER
     )
     """,
     """
@@ -54,7 +56,19 @@ def init_db(db_path: Path = config.DB_PATH) -> None:
     with connect(db_path) as conn:
         for stmt in SCHEMA:
             conn.execute(stmt)
+        _migrate(conn)
         conn.commit()
+
+
+def _migrate(conn) -> None:
+    """Add columns introduced after the first release to an existing DB."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(task_map)")}
+    if "duration_minutes" not in cols:
+        conn.execute(
+            "ALTER TABLE task_map ADD COLUMN duration_minutes INTEGER NOT NULL DEFAULT 30"
+        )
+    if "priority_rank" not in cols:
+        conn.execute("ALTER TABLE task_map ADD COLUMN priority_rank INTEGER")
 
 
 @contextmanager
@@ -82,6 +96,8 @@ def _row_to_record(row: sqlite3.Row) -> SyncRecord:
         last_synced_at=row["last_synced_at"],
         things_mod_at=row["things_mod_at"],
         creation_date=row["creation_date"],
+        duration_minutes=row["duration_minutes"],
+        priority_rank=row["priority_rank"],
     )
 
 
@@ -117,8 +133,8 @@ def upsert_record(conn, record: SyncRecord) -> None:
             things_id, cal_uid, things_title, synced_date,
             synced_start_time, synced_end_time, user_pinned,
             pinned_start_time, pinned_end_time, last_synced_at,
-            things_mod_at, creation_date
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            things_mod_at, creation_date, duration_minutes, priority_rank
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(things_id) DO UPDATE SET
             cal_uid = excluded.cal_uid,
             things_title = excluded.things_title,
@@ -145,7 +161,16 @@ def upsert_record(conn, record: SyncRecord) -> None:
             record.last_synced_at,
             record.things_mod_at,
             record.creation_date,
+            record.duration_minutes,
+            record.priority_rank,
         ),
+    )
+
+
+def update_plan(conn, things_id, duration_minutes, priority_rank):
+    conn.execute(
+        "UPDATE task_map SET duration_minutes = ?, priority_rank = ? WHERE things_id = ?",
+        (duration_minutes, priority_rank, things_id),
     )
 
 

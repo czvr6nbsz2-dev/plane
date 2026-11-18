@@ -112,9 +112,9 @@ def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def _default_slot(target_date: date) -> tuple[datetime, datetime]:
+def _default_slot(target_date: date, minutes: int = config.SLOT_MINUTES) -> tuple[datetime, datetime]:
     start = datetime(target_date.year, target_date.month, target_date.day, config.START_HOUR, 0)
-    return start, start + timedelta(minutes=config.SLOT_MINUTES)
+    return start, start + timedelta(minutes=minutes)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ def phase_things_to_calendar(conn, active_tasks, cal_by_things_id, summary):
 
 
 def _create_for_task(conn, task, target_date, summary, replace=False):
-    start_dt, end_dt = _default_slot(target_date)
+    start_dt, end_dt = _default_slot(target_date, task.duration_minutes)
     try:
         uid = calendar_bridge.create_event(
             title=task.title, start_dt=start_dt, end_dt=end_dt, things_id=task.things_id,
@@ -265,6 +265,7 @@ def _create_for_task(conn, task, target_date, summary, replace=False):
         last_synced_at=_now_iso(),
         things_mod_at=task.modification_date.isoformat(timespec="seconds") if task.modification_date else None,
         creation_date=task.creation_date.isoformat(timespec="seconds") if task.creation_date else None,
+        duration_minutes=task.duration_minutes, priority_rank=task.today_rank,
     )
     db.upsert_record(conn, record)
     summary.affected_dates.add(record.synced_date)
@@ -372,6 +373,29 @@ def phase_calendar_to_things(conn, active_tasks, cal_events, summary):
         except Exception:
             log.exception("Error processing calendar event %s", event.cal_uid)
             summary.errors += 1
+
+
+# ---------------------------------------------------------------------------
+# Plan attributes: size (duration) and priority (Today order)
+# ---------------------------------------------------------------------------
+
+
+def phase_plan_attributes(conn, active_tasks, summary):
+    """Store each task's size tag and Today position; flag dates that need a restack."""
+    for task in active_tasks.values():
+        record = db.get_record(conn, task.things_id)
+        if record is None:
+            continue
+        if (record.duration_minutes == task.duration_minutes
+                and record.priority_rank == task.today_rank):
+            continue
+        if record.duration_minutes != task.duration_minutes:
+            log.info(
+                "Size of %s changed: %d -> %d min (%r)",
+                task.things_id, record.duration_minutes, task.duration_minutes, task.title,
+            )
+        db.update_plan(conn, task.things_id, task.duration_minutes, task.today_rank)
+        summary.affected_dates.add(record.synced_date)
 
 
 # ---------------------------------------------------------------------------
@@ -485,11 +509,14 @@ def phase_restack(conn, summary):
                     log.warning("Bad pinned time on %s; ignoring pin", r.things_id)
 
         def sort_key(r):
+            # Priority: position in Things' Today list first (top = earliest);
+            # tasks outside Today follow, oldest first.
             try:
                 cd = datetime.fromisoformat(r.creation_date) if r.creation_date else datetime.max
             except ValueError:
                 cd = datetime.max
-            return (cd, r.things_id)
+            ranked = r.priority_rank is not None
+            return (0 if ranked else 1, r.priority_rank if ranked else 0, cd, r.things_id)
 
         records_sorted = sorted(records, key=sort_key)
         synthetic_tasks = [
@@ -499,6 +526,7 @@ def phase_restack(conn, summary):
                 modification_date=None,
                 creation_date=(datetime.fromisoformat(r.creation_date) if r.creation_date else None),
                 in_today=False,
+                duration_minutes=r.duration_minutes,
             )
             for r in records_sorted
         ]
@@ -566,6 +594,9 @@ def run_sync() -> int:
             conn.commit()
 
             phase_deletions(conn, active_by_id, summary)
+            conn.commit()
+
+            phase_plan_attributes(conn, active_by_id, summary)
             conn.commit()
 
             # Always restack today so stacking drift (e.g. from an Exchange

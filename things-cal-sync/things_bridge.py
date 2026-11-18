@@ -234,11 +234,21 @@ def _parse_iso_datetime(s):
 
 
 _EXCLUDED_TAGS_LOWER = {t.lower() for t in config.EXCLUDED_TAGS}
+_SIZE_TAGS_LOWER = {k.lower(): v for k, v in config.SIZE_TAGS.items()}
+
+
+def duration_from_tags(tags) -> int:
+    """Event length in minutes: the largest size tag present, else the default."""
+    sizes = [_SIZE_TAGS_LOWER[t.lower()] for t in tags if t.lower() in _SIZE_TAGS_LOWER]
+    return max(sizes) if sizes else config.SLOT_MINUTES
 
 
 def list_active_tasks() -> list[ThingsTask]:
     raw = _run_osascript(_LIST_TASKS_SCRIPT)
     tasks: list[ThingsTask] = []
+    # The script lists the Today list first, in the order Things shows it, so
+    # the running count of in-Today rows is each task's position (priority).
+    today_rank = 0
     for line in raw.splitlines():
         if not line.strip():
             continue
@@ -255,6 +265,11 @@ def list_active_tasks() -> list[ThingsTask]:
             log.info("Skipping task %s (%r): excluded tag(s) %s", tid, name, sorted(excluded))
             continue
 
+        rank = None
+        if in_today == "1":
+            rank = today_rank
+            today_rank += 1
+
         tasks.append(
             ThingsTask(
                 things_id=tid,
@@ -265,6 +280,8 @@ def list_active_tasks() -> list[ThingsTask]:
                 creation_date=_parse_iso_datetime(cdate),
                 in_today=(in_today == "1"),
                 tags=tags,
+                duration_minutes=duration_from_tags(tags),
+                today_rank=rank,
             )
         )
     return tasks

@@ -28,6 +28,10 @@ def assign_slots(
     slot_minutes: int = config.SLOT_MINUTES,
     end_hour: int = config.END_HOUR,
 ) -> dict[str, tuple[datetime, datetime]]:
+    """Place tasks in the order given; earlier in the list means earlier in the day.
+
+    Each task takes its own duration_minutes (default slot_minutes).
+    """
     blocked = list(existing_slots)
     for _tid, slot in pinned_map.items():
         if not any(_overlaps(slot, b) for b in blocked):
@@ -37,8 +41,7 @@ def assign_slots(
     day = datetime(target_date.year, target_date.month, target_date.day)
     work_start = day.replace(hour=start_hour)
     work_end = day.replace(hour=end_hour)
-    # Latest start that still keeps the whole slot inside the target day.
-    last_possible_start = day + timedelta(days=1) - step
+    midnight = day + timedelta(days=1)
 
     cursor = work_start
     overflow_cursor = work_end
@@ -50,23 +53,28 @@ def assign_slots(
             assignments[task.things_id] = pinned_map[task.things_id]
             continue
 
+        duration = timedelta(minutes=getattr(task, "duration_minutes", None) or slot_minutes)
+        # Probe in steps of the slot length, or the task's own length if shorter,
+        # so a 15-minute task can sit in the quarter hour after another one.
+        probe_step = min(step, duration)
+
         slot = None
         probe = cursor
-        while probe + step <= work_end:
-            candidate = (probe, probe + step)
+        while probe + duration <= work_end:
+            candidate = (probe, probe + duration)
             if not _conflicts(candidate, blocked):
                 slot = candidate
-                cursor = probe + step
+                cursor = probe + duration
                 break
-            probe += step
+            probe += probe_step
 
         if slot is None:
             # Working window is full. Queue after END_HOUR rather than hunting
-            # for gaps at night, and never spill past midnight — an event on
+            # for gaps at night, and never spill past midnight -- an event on
             # the following calendar day would contradict its synced_date.
-            start = min(overflow_cursor, last_possible_start)
-            slot = (start, start + step)
-            overflow_cursor = min(start + step, last_possible_start)
+            start = min(overflow_cursor, midnight - duration)
+            slot = (start, start + duration)
+            overflow_cursor = min(start + duration, midnight - step)
 
         assignments[task.things_id] = slot
         blocked.append(slot)

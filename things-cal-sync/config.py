@@ -36,6 +36,15 @@ RECURRING_CACHE_HOURS = 24
 # event is removed the next time the sync runs so the calendar stays clean).
 EXCLUDED_TAGS: frozenset = frozenset({"@w"})
 
+# Size tags: a Things tag sets the length of the calendar event. Tasks without
+# a size tag get SLOT_MINUTES. If a task has several, the largest wins.
+# Matched case-insensitively.
+SIZE_TAGS: dict = {
+    "@15m": 15,
+    "@1u": 60,
+    "@2u": 120,
+}
+
 # AppleScript marker stored inside event description
 THINGS_ID_MARKER = "x-things-id:"
 
